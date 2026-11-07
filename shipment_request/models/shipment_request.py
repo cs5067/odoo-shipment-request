@@ -27,6 +27,16 @@ class ShipmentRequest(models.Model):
 
     _reference_unique = models.Constraint("UNIQUE(name)", "The shipment reference must be unique.")
 
+    @api.model
+    def default_get(self, fields_list):
+        values = super().default_get(fields_list)
+        # Creating from any kanban column still opens a Preparing shipment.
+        if "state" in fields_list:
+            values["state"] = "preparing"
+        if "name" in fields_list:
+            values["name"] = "New"
+        return values
+
     @api.depends("cargo_ids.total_weight", "cargo_ids.total_volume")
     def _compute_totals(self):
         for shipment in self:

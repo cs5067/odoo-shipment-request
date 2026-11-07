@@ -1,0 +1,17 @@
+name: Odoo 19 module tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  install-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install on a fresh database and run module tests
+        run: ./scripts/test.sh
+      - name: Stop test services
+        if: always()
+        run: docker compose down
