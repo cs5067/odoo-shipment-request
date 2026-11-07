@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="report_shipment_order_document">
+        <t t-call="web.external_layout">
+            <div class="page">
+                <h2>Shipment Order <span t-field="o.name"/></h2>
+                <div class="row mb-4">
+                    <div class="col-7">
+                        <strong>Customer</strong>
+                        <div t-field="o.customer_id"
+                             t-options="{'widget': 'contact', 'fields': ['name', 'address', 'phone'], 'no_marker': True}"/>
+                    </div>
+                    <div class="col-5">
+                        <p class="mb-1"><strong>Shipment type: </strong><span t-field="o.shipment_type_id"/></p>
+                        <p class="mb-1"><strong>Status: </strong><span t-field="o.state"/></p>
+                    </div>
+                </div>
+                <div class="row mb-4">
+                    <div class="col-6">
+                        <strong>Origin</strong>
+                        <div t-field="o.origin" style="white-space: pre-line;"/>
+                        <p class="mt-2 mb-0"><strong>Requested pickup: </strong><span t-field="o.pickup_date"/></p>
+                    </div>
+                    <div class="col-6">
+                        <strong>Destination</strong>
+                        <div t-field="o.destination" style="white-space: pre-line;"/>
+                        <p class="mt-2 mb-0"><strong>Requested delivery: </strong><span t-field="o.delivery_date"/></p>
+                    </div>
+                </div>
+                <h4>Cargo Items</h4>
+                <table class="table table-sm o_main_table" style="font-size: 12px;">
+                    <thead style="display: table-header-group;">
+                        <tr>
+                            <th style="width: 35%;">Description</th>
+                            <th class="text-end">Quantity</th>
+                            <th class="text-end">Unit weight<br/>(kg)</th>
+                            <th class="text-end">Unit volume<br/>(m³)</th>
+                            <th class="text-end">Total weight<br/>(kg)</th>
+                            <th class="text-end">Total volume<br/>(m³)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr t-foreach="o.cargo_ids" t-as="line" style="page-break-inside: avoid;">
+                            <td><span t-field="line.description" style="white-space: pre-line;"/></td>
+                            <td class="text-end"><span t-field="line.quantity"/></td>
+                            <td class="text-end"><span t-field="line.weight"/></td>
+                            <td class="text-end"><span t-field="line.volume"/></td>
+                            <td class="text-end"><span t-field="line.total_weight"/></td>
+                            <td class="text-end"><span t-field="line.total_volume"/></td>
+                        </tr>
+                        <tr t-if="not o.cargo_ids">
+                            <td colspan="6" class="text-muted">No cargo items have been added.</td>
+                        </tr>
+                    </tbody>
+                    <tfoot>
+                        <tr class="fw-bold" style="page-break-inside: avoid;">
+                            <td colspan="4" class="text-end">Shipment totals</td>
+                            <td class="text-end"><span t-field="o.total_weight"/> kg</td>
+                            <td class="text-end"><span t-field="o.total_volume"/> m³</td>
+                        </tr>
+                    </tfoot>
+                </table>
+                <p class="text-muted" style="font-size: 11px;">Cargo totals = quantity × unit weight or volume.</p>
+            </div>
+        </t>
+    </template>
+
+    <template id="report_shipment_order">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="o">
+                <t t-call="shipment_request.report_shipment_order_document"/>
+            </t>
+        </t>
+    </template>
+
+    <record id="action_report_shipment_order" model="ir.actions.report">
+        <field name="name">Shipment Order</field>
+        <field name="model">shipment.request</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">shipment_request.report_shipment_order</field>
+        <field name="report_file">shipment_request.report_shipment_order</field>
+        <field name="binding_model_id" ref="model_shipment_request"/>
+        <field name="binding_type">report</field>
+        <field name="group_ids" eval="[(4, ref('shipment_request.group_shipment_user'))]"/>
+        <field name="print_report_name">'Shipment Order - %s' % object.name</field>
+    </record>
+</odoo>

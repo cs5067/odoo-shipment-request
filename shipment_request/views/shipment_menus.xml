@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_shipment_root" name="Shipments" sequence="25"
+              groups="shipment_request.group_shipment_user"/>
+    <menuitem id="menu_shipment_requests" name="Shipments" parent="menu_shipment_root"
+              action="action_shipment_request" sequence="10"
+              groups="shipment_request.group_shipment_user"/>
+    <menuitem id="menu_shipment_configuration" name="Configuration" parent="menu_shipment_root"
+              sequence="20" groups="shipment_request.group_shipment_manager"/>
+    <menuitem id="menu_shipment_types" name="Shipment Types" parent="menu_shipment_configuration"
+              action="action_shipment_type" sequence="10"
+              groups="shipment_request.group_shipment_manager"/>
+</odoo>

@@ -6,7 +6,15 @@
     "author": "Abid Hatim",
     "license": "LGPL-3",
     "depends": ["base", "mail", "web"],
-    "data": [],
+    "data": [
+        "security/shipment_security.xml",
+        "security/ir.model.access.csv",
+        "data/shipment_sequence.xml",
+        "report/shipment_order_report.xml",
+        "views/shipment_type_views.xml",
+        "views/shipment_request_views.xml",
+        "views/shipment_menus.xml",
+    ],
     "application": True,
     "installable": True,
 }

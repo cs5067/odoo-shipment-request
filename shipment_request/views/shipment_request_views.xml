@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_shipment_request_list" model="ir.ui.view">
+        <field name="name">shipment.request.list</field>
+        <field name="model">shipment.request</field>
+        <field name="arch" type="xml">
+            <list string="Shipments" default_order="id desc">
+                <field name="name"/>
+                <field name="customer_id"/>
+                <field name="shipment_type_id"/>
+                <field name="origin" optional="show"/>
+                <field name="destination" optional="show"/>
+                <field name="pickup_date" optional="show"/>
+                <field name="delivery_date" optional="show"/>
+                <field name="total_weight" string="Weight (kg)" optional="show" sum="Total weight (kg)"/>
+                <field name="total_volume" string="Volume (m³)" optional="show" sum="Total volume (m³)"/>
+                <field name="state" widget="badge"
+                       decoration-muted="state == 'preparing'"
+                       decoration-info="state == 'with_courier'"
+                       decoration-warning="state == 'on_the_way'"
+                       decoration-success="state == 'delivered'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_shipment_request_kanban" model="ir.ui.view">
+        <field name="name">shipment.request.kanban</field>
+        <field name="model">shipment.request</field>
+        <field name="arch" type="xml">
+            <kanban default_group_by="state" default_order="id desc"
+                    quick_create="false" records_draggable="false" groups_draggable="false"
+                    group_create="false" group_edit="false" group_delete="false">
+                <templates>
+                    <t t-name="card">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <field name="name" class="fw-bold fs-5"/>
+                            <field name="shipment_type_id" class="text-muted"/>
+                        </div>
+                        <field name="customer_id" class="fw-semibold mb-2"/>
+                        <div class="text-muted text-truncate"><span class="fw-semibold">From: </span><field name="origin"/></div>
+                        <div class="text-muted text-truncate mb-2"><span class="fw-semibold">To: </span><field name="destination"/></div>
+                        <div class="d-flex justify-content-between border-top pt-2">
+                            <span>Pickup <field name="pickup_date"/></span>
+                            <span><field name="total_weight"/> kg</span>
+                        </div>
+                        <div class="d-flex justify-content-between text-muted">
+                            <span>Delivery <field name="delivery_date"/></span>
+                            <span><field name="total_volume"/> m³</span>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="view_shipment_request_form" model="ir.ui.view">
+        <field name="name">shipment.request.form</field>
+        <field name="model">shipment.request</field>
+        <field name="arch" type="xml">
+            <form string="Shipment Request">
+                <header>
+                    <button name="action_with_courier" type="object" string="Hand to Courier"
+                            class="oe_highlight" invisible="state != 'preparing'"/>
+                    <button name="action_on_the_way" type="object" string="Mark On the Way"
+                            class="oe_highlight" invisible="state != 'with_courier'"/>
+                    <button name="action_delivered" type="object" string="Mark Delivered"
+                            class="oe_highlight" invisible="state != 'on_the_way'"/>
+                    <button name="%(action_report_shipment_order)d" type="action" string="Print Shipment Order"
+                            groups="shipment_request.group_shipment_user" invisible="not id"/>
+                    <field name="state" widget="statusbar" readonly="1"
+                           statusbar_visible="preparing,with_courier,on_the_way,delivered"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Shipment">
+                            <field name="customer_id"/>
+                            <field name="shipment_type_id" options="{'no_create': True, 'no_create_edit': True}"/>
+                        </group>
+                        <group string="Requested Dates">
+                            <field name="pickup_date"/>
+                            <field name="delivery_date"/>
+                        </group>
+                    </group>
+                    <group string="Route">
+                        <group><field name="origin" placeholder="Pickup address or location"/></group>
+                        <group><field name="destination" placeholder="Delivery address or location"/></group>
+                    </group>
+                    <separator string="Cargo Items"/>
+                    <p class="text-muted">Enter weight and volume per unit. Totals include each item's quantity.</p>
+                    <field name="cargo_ids" nolabel="1">
+                        <list editable="bottom">
+                            <field name="sequence" widget="handle"/>
+                            <field name="description"/>
+                            <field name="quantity"/>
+                            <field name="weight" string="Unit Weight (kg)"/>
+                            <field name="volume" string="Unit Volume (m³)"/>
+                            <field name="total_weight" string="Weight (kg)" readonly="1"/>
+                            <field name="total_volume" string="Volume (m³)" readonly="1"/>
+                        </list>
+                        <form string="Cargo Item">
+                            <group>
+                                <field name="description"/>
+                                <field name="quantity"/>
+                                <field name="weight" string="Unit Weight (kg)"/>
+                                <field name="volume" string="Unit Volume (m³)"/>
+                                <field name="total_weight" string="Weight (kg)" readonly="1"/>
+                                <field name="total_volume" string="Volume (m³)" readonly="1"/>
+                            </group>
+                        </form>
+                    </field>
+                    <group class="oe_subtotal_footer">
+                        <field name="total_weight" string="Total Weight (kg)" readonly="1"/>
+                        <field name="total_volume" string="Total Volume (m³)" readonly="1"/>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_shipment_request_search" model="ir.ui.view">
+        <field name="name">shipment.request.search</field>
+        <field name="model">shipment.request</field>
+        <field name="arch" type="xml">
+            <search string="Search Shipments">
+                <field name="name"/>
+                <field name="customer_id"/>
+                <field name="shipment_type_id"/>
+                <field name="state"/>
+                <field name="origin"/>
+                <field name="destination"/>
+                <separator/>
+                <filter name="preparing" string="Preparing" domain="[('state', '=', 'preparing')]"/>
+                <filter name="with_courier" string="With Courier" domain="[('state', '=', 'with_courier')]"/>
+                <filter name="on_the_way" string="On the Way" domain="[('state', '=', 'on_the_way')]"/>
+                <filter name="delivered" string="Delivered" domain="[('state', '=', 'delivered')]"/>
+                <separator/>
+                <filter name="open_shipments" string="Open Shipments" domain="[('state', '!=', 'delivered')]"/>
+                <group>
+                    <filter name="group_state" string="Status" context="{'group_by': 'state'}"/>
+                    <filter name="group_type" string="Shipment Type" context="{'group_by': 'shipment_type_id'}"/>
+                    <filter name="group_customer" string="Customer" context="{'group_by': 'customer_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_shipment_request" model="ir.actions.act_window">
+        <field name="name">Shipments</field>
+        <field name="res_model">shipment.request</field>
+        <field name="view_mode">list,kanban,form</field>
+        <field name="search_view_id" ref="view_shipment_request_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Register your first shipment</p>
+            <p>Add the customer, route, requested dates, and cargo. Then use the shipment buttons to follow its delivery.</p>
+        </field>
+    </record>
+</odoo>
