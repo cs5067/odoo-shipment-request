@@ -123,6 +123,120 @@ class TestShipmentRequest(TransactionCase):
         self.assertEqual(shipment.state, "with_courier")
         self._assert_totals(shipment, 0, 0)
 
+    def test_cargo_is_immutable_after_preparing_for_users_and_managers(self):
+        shipment = self._shipment(cargo=True)
+        for action in ("action_with_courier", "action_on_the_way", "action_delivered"):
+            getattr(shipment, action)()
+            for user in (self.shipment_user, self.shipment_manager):
+                Cargo = self.Cargo.with_user(user)
+                line = shipment.cargo_ids.with_user(user)
+                with self.subTest(state=shipment.state, user=user.login):
+                    with self.assertRaises(UserError), self.cr.savepoint():
+                        Cargo.create(self._cargo_values(shipment_id=shipment.id))
+                    with self.assertRaises(UserError), self.cr.savepoint():
+                        Cargo.with_context(default_shipment_id=shipment.id).create(
+                            self._cargo_values()
+                        )
+                    for values in (
+                        {"description": "Changed cargo"},
+                        {"quantity": 9},
+                        {"weight": 9},
+                        {"volume": 9},
+                        {"sequence": 99},
+                    ):
+                        with self.subTest(values=values):
+                            with self.assertRaises(UserError), self.cr.savepoint():
+                                line.write(values)
+                    with self.assertRaises(UserError), self.cr.savepoint():
+                        line.unlink()
+                    with self.assertRaises(UserError), self.cr.savepoint():
+                        line.with_context(_force_unlink=True).unlink()
+            self.assertEqual(len(shipment.cargo_ids), 1)
+            self._assert_totals(shipment, 7, 0.5)
+
+    def test_cargo_reassignment_checks_source_and_destination_shipments(self):
+        preparing = self._shipment(cargo=True)
+        locked = self._shipment(cargo=True)
+        preparing_line = preparing.cargo_ids
+        locked_line = locked.cargo_ids
+        for action in ("action_with_courier", "action_on_the_way", "action_delivered"):
+            getattr(locked, action)()
+            with self.subTest(state=locked.state):
+                with self.assertRaises(UserError), self.cr.savepoint():
+                    locked_line.write({"shipment_id": preparing.id})
+                with self.assertRaises(UserError), self.cr.savepoint():
+                    preparing_line.write({"shipment_id": locked.id})
+                self.assertEqual(locked_line.shipment_id, locked)
+                self.assertEqual(preparing_line.shipment_id, preparing)
+                self._assert_totals(locked, 7, 0.5)
+                self._assert_totals(preparing, 7, 0.5)
+
+        # An explicit editable parent takes precedence over a context default.
+        line = self.Cargo.with_context(default_shipment_id=locked.id).create(
+            self._cargo_values(shipment_id=preparing.id)
+        )
+        self.assertEqual(line.shipment_id, preparing)
+
+    def test_one2many_commands_cannot_bypass_cargo_immutability(self):
+        preparing = self._shipment(cargo=True)
+        locked = self._shipment(cargo=True)
+        preparing_line = preparing.cargo_ids
+        locked_line = locked.cargo_ids
+        locked.action_with_courier()
+        for command in (
+            Command.clear(),
+            Command.delete(locked_line.id),
+            Command.unlink(locked_line.id),
+            Command.update(locked_line.id, {"quantity": 9}),
+            Command.create(self._cargo_values()),
+            Command.set([]),
+            Command.link(preparing_line.id),
+        ):
+            with self.subTest(command=command):
+                with self.assertRaises(UserError), self.cr.savepoint():
+                    locked.write({"cargo_ids": [command]})
+        for command in (
+            Command.link(locked_line.id),
+            Command.set([locked_line.id]),
+            Command.update(preparing_line.id, {"shipment_id": locked.id}),
+        ):
+            with self.subTest(reassignment=command):
+                with self.assertRaises(UserError), self.cr.savepoint():
+                    preparing.write({"cargo_ids": [command]})
+        with self.assertRaises(UserError), self.cr.savepoint():
+            self._shipment(cargo_ids=[Command.link(locked_line.id)])
+        self.assertEqual(locked.cargo_ids, locked_line)
+        self.assertEqual(preparing.cargo_ids, preparing_line)
+        self._assert_totals(locked, 7, 0.5)
+        self._assert_totals(preparing, 7, 0.5)
+
+    def test_in_progress_shipments_cannot_be_deleted_by_either_role(self):
+        shipment = self._shipment(cargo=True)
+        preparing = self._shipment(cargo=True)
+        for action in ("action_with_courier", "action_on_the_way", "action_delivered"):
+            getattr(shipment, action)()
+            for user in (self.shipment_user, self.shipment_manager):
+                with self.subTest(state=shipment.state, user=user.login):
+                    with self.assertRaises(UserError), self.cr.savepoint():
+                        shipment.with_user(user).unlink()
+                    with self.assertRaises(UserError), self.cr.savepoint():
+                        shipment.with_user(user).with_context(_force_unlink=True).unlink()
+                    with self.assertRaises(UserError), self.cr.savepoint():
+                        (preparing | shipment).with_user(user).unlink()
+            self.assertTrue(shipment.exists())
+            self.assertTrue(preparing.exists())
+            self.assertEqual(len(shipment.cargo_ids), 1)
+            self.assertEqual(len(preparing.cargo_ids), 1)
+
+    def test_preparing_shipments_can_be_deleted_with_their_cargo(self):
+        for user in (self.shipment_user, self.shipment_manager):
+            with self.subTest(user=user.login):
+                shipment = self._shipment(cargo=True).with_user(user)
+                cargo = shipment.cargo_ids
+                shipment.unlink()
+                self.assertFalse(shipment.exists())
+                self.assertFalse(cargo.exists())
+
     def test_invalid_cargo_quantities_and_measurements_are_rejected(self):
         shipment = self._shipment(cargo=True)
         for invalid_values, constraint in (
@@ -281,9 +395,9 @@ class TestShipmentRequest(TransactionCase):
         colleague_record.action_with_courier()
         self.assertEqual(shipment.state, "with_courier")
         self._assert_totals(shipment, 10.5, 0.75)
-        cargo = shipment.cargo_ids
-        colleague_record.unlink()
-        self.assertFalse(cargo.exists())
+        with self.assertRaises(UserError):
+            colleague_record.unlink()
+        self.assertTrue(shipment.exists())
 
     def test_user_can_read_types_but_only_manager_can_manage_them(self):
         user_type = self.shipment_type.with_user(self.shipment_user)

@@ -1,4 +1,5 @@
 from odoo import api, fields, models, _
+from odoo.addons.base.models.ir_model import MODULE_UNINSTALL_FLAG
 from odoo.exceptions import UserError, ValidationError
 
 
@@ -64,6 +65,18 @@ class ShipmentRequest(models.Model):
         if "name" in vals and any(shipment.name != vals["name"] for shipment in self):
             raise UserError(_("Shipment references are assigned automatically and cannot be changed."))
         return super().write(vals)
+
+    def _check_cargo_editable(self):
+        if any(shipment.state != "preparing" for shipment in self):
+            raise UserError(_("Cargo can only be changed while a shipment is Preparing. It is locked after handoff to the courier."))
+
+    @api.ondelete(at_uninstall=True)
+    def _unlink_except_preparing(self):
+        # Allow Odoo's privileged module cleanup, not a caller-supplied context alone.
+        if self.env.su and self.env.context.get(MODULE_UNINSTALL_FLAG):
+            return
+        if any(shipment.state != "preparing" for shipment in self):
+            raise UserError(_("Only shipments in Preparing can be deleted. Shipments handed to the courier are kept with their delivery history."))
 
     @api.constrains("pickup_date", "delivery_date")
     def _check_dates(self):

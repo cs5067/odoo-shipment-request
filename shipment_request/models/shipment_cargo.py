@@ -1,6 +1,7 @@
 import math
 
 from odoo import api, fields, models, _
+from odoo.addons.base.models.ir_model import MODULE_UNINSTALL_FLAG
 from odoo.exceptions import ValidationError
 
 
@@ -22,6 +23,30 @@ class ShipmentCargo(models.Model):
     _quantity_positive = models.Constraint("CHECK(quantity > 0)", "Cargo quantity must be greater than zero.")
     _weight_nonnegative = models.Constraint("CHECK(weight >= 0)", "Cargo weight cannot be negative.")
     _volume_nonnegative = models.Constraint("CHECK(volume >= 0)", "Cargo volume cannot be negative.")
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        default_shipment = (
+            self.default_get(["shipment_id"]).get("shipment_id")
+            if any("shipment_id" not in vals for vals in vals_list) else False
+        )
+        shipment_ids = {vals.get("shipment_id", default_shipment) for vals in vals_list}
+        self.env["shipment.request"].browse(shipment_ids - {False, None})._check_cargo_editable()
+        return super().create(vals_list)
+
+    def write(self, vals):
+        shipments = self.mapped("shipment_id")
+        if vals.get("shipment_id"):
+            shipments |= self.env["shipment.request"].browse(vals["shipment_id"])
+        # Reassignment must be allowed on both the old and the new shipment.
+        shipments._check_cargo_editable()
+        return super().write(vals)
+
+    @api.ondelete(at_uninstall=True)
+    def _unlink_only_preparing(self):
+        if self.env.su and self.env.context.get(MODULE_UNINSTALL_FLAG):
+            return
+        self.mapped("shipment_id")._check_cargo_editable()
 
     @api.depends("quantity", "weight", "volume")
     def _compute_totals(self):
