@@ -3,6 +3,7 @@ name: Odoo 19 module tests
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   install-and-test:
