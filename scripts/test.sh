@@ -11,6 +11,7 @@ cleanup() {
     exit "$result"
 }
 
+docker compose build odoo
 docker compose up -d --wait db
 trap cleanup EXIT
 docker compose run --rm --no-deps -T odoo odoo \

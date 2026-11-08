@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!shipment_request/
+!shipment_request/**
+**/__pycache__/
+**/*.pyc
+**/.DS_Store

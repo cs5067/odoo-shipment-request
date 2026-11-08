@@ -1,6 +1,9 @@
+from psycopg2.errors import CheckViolation, UniqueViolation
+
 from odoo import Command
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import TransactionCase, new_test_user, tagged
+from odoo.tools import mute_logger
 
 
 @tagged("post_install", "-at_install")
@@ -122,17 +125,24 @@ class TestShipmentRequest(TransactionCase):
 
     def test_invalid_cargo_quantities_and_measurements_are_rejected(self):
         shipment = self._shipment(cargo=True)
-        for invalid_values in (
-            {"quantity": 0},
-            {"quantity": -1},
-            {"weight": -0.1},
-            {"volume": -0.1},
+        for invalid_values, constraint in (
+            ({"quantity": 0}, "shipment_cargo_quantity_positive"),
+            ({"quantity": -1}, "shipment_cargo_quantity_positive"),
+            ({"weight": -0.1}, "shipment_cargo_weight_nonnegative"),
+            ({"volume": -0.1}, "shipment_cargo_volume_nonnegative"),
         ):
             with self.subTest(values=invalid_values):
-                with self.assertRaises(ValidationError), self.cr.savepoint():
+                # INSERT hits PostgreSQL before Python constraints. Odoo's RPC
+                # error handler translates this into the constraint's message.
+                with (
+                    mute_logger("odoo.sql_db"),
+                    self.assertRaises(CheckViolation) as raised,
+                    self.cr.savepoint(),
+                ):
                     self.Cargo.create(
                         self._cargo_values(shipment_id=shipment.id, **invalid_values)
                     )
+                self.assertEqual(raised.exception.diag.constraint_name, constraint)
                 with self.assertRaises(ValidationError), self.cr.savepoint():
                     shipment.cargo_ids.write(invalid_values)
         self._assert_totals(shipment, 7, 0.5)
@@ -231,8 +241,13 @@ class TestShipmentRequest(TransactionCase):
             {"name": "Test Air", "code": "  test-air  ", "category": "air"}
         )
         self.assertEqual(shipment_type.code, "TEST-AIR")
-        with self.assertRaises(ValidationError), self.cr.savepoint():
+        with (
+            mute_logger("odoo.sql_db"),
+            self.assertRaises(UniqueViolation) as raised,
+            self.cr.savepoint(),
+        ):
             Type.create({"name": "Duplicate", "code": "test-air", "category": "air"})
+        self.assertEqual(raised.exception.diag.constraint_name, "shipment_type_code_unique")
         shipment_type.write({"code": "  air-edited  "})
         self.assertEqual(shipment_type.code, "AIR-EDITED")
 

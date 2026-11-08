@@ -16,7 +16,8 @@ services:
       retries: 20
 
   odoo:
-    image: odoo:19
+    build: .
+    image: odoo-shipment:19
     depends_on:
       db:
         condition: service_healthy
@@ -27,7 +28,6 @@ services:
     ports:
       - "127.0.0.1:18069:8069"
     volumes:
-      - ./shipment_request:/mnt/extra-addons/shipment_request:ro
       - odoo-data:/var/lib/odoo
     command:
       - odoo
