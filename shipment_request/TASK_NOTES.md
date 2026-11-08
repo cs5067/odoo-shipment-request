@@ -72,6 +72,11 @@ wkhtmltopdf **0.12.6.1** in Docker:
 - The test script removed its temporary database; the local `shipment_demo`
   database remains available with one sample request for inspection. Sample data
   is not installed by the addon on other databases.
+- Remote CI caveat: the initial GitHub Actions run reported `startup_failure`
+  before creating any jobs or runner logs, and GitHub refused a retry. The
+  workflow is present and enabled, but a passing cloud run has not been verified.
+  This is separate from the successful local fresh-database test run above.
+  [Initial run details](https://github.com/cs5067/odoo-shipment-request/actions/runs/42437943754).
 
 ### Install and try with Docker
 
