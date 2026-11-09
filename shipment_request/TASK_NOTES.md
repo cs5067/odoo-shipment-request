@@ -60,7 +60,8 @@ Assumptions and operating rules:
 - Added a PDF shipment order containing the reference, customer, route, dates,
   cargo quantities and unit measurements, line totals, and shipment totals.
 - Included automated Odoo tests, a fresh-database test script, a Docker setup,
-  and a GitHub Actions workflow using the same test script.
+  an opt-in reviewer setup with both normal roles, and a GitHub Actions workflow
+  using the same test script.
 
 Repository: [odoo-shipment-request](https://github.com/cs5067/odoo-shipment-request).
 Repository access is required because it is private.
@@ -103,7 +104,14 @@ and wkhtmltopdf **0.12.6.1** in Docker.
   SHA-256 after rebuilding, upgrading, and recreating the service. The addon
   path avoids the base image's persistent addon volume, which otherwise retained
   older code during a container recreation.
-- Sample records used for verification are not installed by the addon.
+- Ordinary addon installation creates no reviewer accounts or sample customer.
+  The optional reviewer setup script creates them explicitly.
+- The reviewer setup was run on a separate fresh Docker project. Both ordinary
+  account logins, manager-only type maintenance, user validation errors, all
+  three delivery actions and their history, and PDF download as a Shipment User
+  were verified. A rejected deletion through an authenticated request preserved
+  the shipment and its history. Rerunning setup preserved existing records,
+  history, reference sequence, account passwords, and profile settings.
 - Remote CI remains blocked before execution: both push and manual GitHub
   Actions runs reported `startup_failure` without creating jobs or runner logs.
   The enabled workflow passes actionlint 1.7.12 and supports manual dispatch.
@@ -113,64 +121,104 @@ and wkhtmltopdf **0.12.6.1** in Docker.
 
 ### Install and try with Docker
 
-Prerequisite: Docker Desktop, or Docker Engine with the Compose plugin. Run
-these commands from the repository root, which contains `compose.yaml`:
+Prerequisites: Git, Bash, Docker Desktop (or Docker Engine with the Compose plugin),
+and access to the private repository. Authenticate Git with your GitHub account,
+then run:
 
 ```bash
-docker compose build odoo
-docker compose up -d --wait db
-docker compose run --rm -T odoo odoo -d shipment_demo -i shipment_request --without-demo=true --stop-after-init
-docker compose run --rm -T odoo odoo shell -d shipment_demo --no-http <<'PY'
-env["ir.config_parameter"].sudo().set_param("report.url", "http://127.0.0.1:8069")
-env.cr.commit()
-PY
-docker compose up -d odoo
+git clone https://github.com/cs5067/odoo-shipment-request.git
+cd odoo-shipment-request
+./scripts/setup-demo.sh
 ```
 
-The `report.url` setting lets the PDF renderer load report assets through Odoo's
-internal container port, while the browser uses port 18069 on the host.
+This opt-in script builds the image, initializes or upgrades `shipment_demo`,
+creates missing reviewer accounts and **Sample Logistics Customer**, configures
+PDF rendering, starts Odoo, and waits for it to respond. It uses local
+development credentials and publishes the web port only on loopback. Ordinary
+addon installation does not create these accounts or the sample customer.
 
-1. Open <http://127.0.0.1:18069>. A newly initialized development database uses
-   login `admin`, password `admin`. Compose uses development credentials and
-   publishes the Odoo port only on loopback.
-2. The administrator is initially a Shipment Manager. For other internal users,
-   open **Settings → Users & Companies → Users**, select a user, and set their
-   **Shipments** access to **Shipment User** or **Shipment Manager**. Shipment
-   roles are not granted to all internal users by default.
-3. As a manager, open **Shipments → Configuration → Shipment Types**. Create
-   `Road Express`, code `ROAD`, category `Road`. Archive/unarchive is available
-   in the record's Actions menu; the Archived filter finds archived types.
-4. Open **Shipments → Shipments → New**. Select or create a contact, choose the
-   type, enter the route and requested dates, and save. Pickup must be today or
-   later, and delivery must be on or after pickup. A reference is assigned.
-5. Try **Hand to Courier** without cargo to see the validation message. Add a
-   cargo line with quantity `2`, unit weight `3.5`, and unit volume `0.25`. The
-   totals are `7.000 kg` and `0.500 m³`. Edit or remove the line while Preparing
-   to check recomputation, then leave at least one item for handoff. A line may
-   be saved with zero weight or volume while Preparing, but handoff will name
-   every incomplete item and require both measurements to be greater than zero.
-6. Use **Hand to Courier**. Cargo becomes read-only and the request can no longer
-   be deleted. Use **Mark On the Way** and **Mark Delivered** to finish the
-   lifecycle. Each change appears in the history; the status bar is read-only.
-7. Switch between List and Kanban. Open the search dropdown for status filters
-   and grouping by status, shipment type, or customer.
-8. Click **Print Shipment Order**, or select **Shipment Order** in the Print
-   menu. The standard company report layout supplies the logo, header, and footer.
+Open <http://127.0.0.1:18069> and sign in with:
 
-The Docker image contains a copy of the addon in `/opt/odoo/custom-addons`,
-outside the base image's persistent addon volume. This avoids stale code being
-retained when a container is recreated. Rebuild the image and upgrade the
-database after source changes:
+| Login | Initial password | Role |
+| --- | --- | --- |
+| `shipment.manager` | `ShipmentDemo!2026` | Shipment Manager |
+| `shipment.user` | `ShipmentDemo!2026` | Shipment User |
 
-```bash
-docker compose build odoo
-docker compose stop odoo
-docker compose run --rm -T odoo odoo -d shipment_demo -u shipment_request --stop-after-init
-docker compose up -d odoo
-```
+Both are ordinary internal accounts without Settings administration access.
+New accounts use UTC; change the user's timezone in their profile preferences
+if needed. Date validation uses the active user's timezone. A fresh database
+also has `admin` / `admin` for Settings and manual user management.
+If login opens Discuss, use **Home Menu** (the top-left app icon) → **Shipments**.
+
+### Review both roles and the full workflow
+
+1. Sign in as `shipment.manager`. Open **Shipments → Configuration → Shipment
+   Types → New**. Create `Road Express`, code `ROAD`, category `Road`, and save.
+   Codes are normalized to uppercase and must be unique. On subsequent runs,
+   use the existing type instead of creating the same code again.
+2. Open the top-right user menu → **Log out**, then sign in as `shipment.user`.
+   The Shipments **Configuration** menu is absent. This account can select shipment types but
+   cannot create, edit, archive, or delete them. Neither reviewer account can
+   administer users through Settings.
+3. Open **Shipments → Shipments → New**. Select **Sample Logistics Customer**
+   and the type, enter the origin and destination, and choose pickup today or
+   later with delivery on or after pickup. Save and note the generated reference.
+   Trying yesterday's pickup or delivery before pickup should produce an error.
+4. Try **Hand to Courier** with no cargo; the shipment must remain Preparing.
+   Add a cargo line with quantity `2`, unit weight `3.5`, and volume `0`. It can
+   be saved, but handoff must name the incomplete item and block progression.
+   Change volume to `0.25`: totals become **7.000 kg** and **0.500 m³**. Edit,
+   add, or remove lines while Preparing to check automatic recomputation, then
+   leave at least one line with positive measurements for handoff.
+5. Use **Hand to Courier → Mark On the Way → Mark Delivered**. Cargo becomes
+   read-only after handoff; attempting to delete the request is rejected by the
+   server. Each status change appears in the history with an actor and date.
+   The status bar itself cannot be edited.
+6. Switch between List and Kanban. All four lifecycle columns remain visible,
+   including empty stages. Use the search dropdown for status filters and
+   grouping by shipment type or customer.
+7. While signed in as `shipment.user`, click **Print Shipment Order**, or choose
+   **Shipment Order** in the Print menu. Check the PDF's reference, customer,
+   route, cargo, and totals. The standard company layout supplies the header
+   and footer. The setup script sets `report.url` to `http://127.0.0.1:8069` so
+   the renderer can load assets through the container's internal port.
+8. Log out and sign back in as `shipment.manager`. The same shipment is visible
+   because both roles share the team queue. Open the type and use **Actions →
+   Archive**. It remains on existing shipments but is unavailable for new ones.
+   Use the **Archived** filter to find the type and **Actions → Unarchive** to
+   restore it. Managers obey the same cargo and request-deletion restrictions.
+
+### Rerun, stop, or use an isolated demo
+
+Rerun `./scripts/setup-demo.sh` after source changes. It rebuilds and upgrades
+the addon, briefly stops and restarts Odoo, and preserves existing shipments,
+passwords, and profile settings. Initial demo passwords apply only when accounts
+are first created. Use an existing password if it has changed; an administrator
+can reset it through Settings if needed.
+
+If either demo login already belongs to an inactive, portal, administrative, or
+unexpected-role account, setup stops with a clear error without saving account
+changes. To resolve it, start Odoo with `docker compose up -d --wait odoo`, sign
+in as an administrator, and use Settings to rename that existing login or assign
+the expected shipment role without administration access. Then rerun setup.
 
 Use `docker compose stop` to stop services while retaining the database and
-filestore in their named Docker volumes.
+filestore. The image stores addon code in `/opt/odoo/custom-addons`, outside the
+base image's persistent addon volume, so recreated containers load the rebuilt
+code.
+
+For a separate fresh demo alongside an existing one, use both a different
+Compose project name and a free host port in the same terminal:
+
+```bash
+export COMPOSE_PROJECT_NAME=shipment-review
+export SHIPMENT_PORT=18070
+./scripts/setup-demo.sh
+```
+
+Open <http://127.0.0.1:18070>. Keep these variables set for subsequent setup,
+test, and `docker compose stop` commands so they address the same isolated
+project. Changing only the port does not isolate database or filestore volumes.
 
 ### Install into an existing Odoo 19 server
 
@@ -185,7 +233,14 @@ filestore in their named Docker volumes.
    odoo -c /path/to/odoo.conf -d DATABASE -i shipment_request --without-demo=true --stop-after-init
    ```
 
-4. Configure wkhtmltopdf as required by Odoo to print PDFs. The supplied Docker
+4. Sign in as an administrator and open **Settings → Users & Companies → Users**.
+   Create or select an internal user and set **Shipments** access to **Shipment
+   User** or **Shipment Manager**. A shipment manager does not need Settings
+   administration rights. No shipment role is granted to all internal users by
+   default; the administrator is initially a Shipment Manager. Log out and sign
+   in as each ordinary user to follow the workflow above with your own contact.
+   Normal installation has no predefined reviewer logins or passwords.
+5. Configure wkhtmltopdf as required by Odoo to print PDFs. The supplied Docker
    image already contains it. If Odoo cannot reach its public base URL from
    inside the container, set the standard `report.url` system parameter to an
    internally reachable Odoo URL. The local verification database uses
