@@ -90,7 +90,7 @@
                         <group><field name="destination" placeholder="Delivery address or location"/></group>
                     </group>
                     <separator string="Cargo Items"/>
-                    <p class="text-muted">Enter weight and volume per unit. Totals include each item's quantity. Cargo is locked after handoff to the courier.</p>
+                    <p class="text-muted">Enter weight and volume per unit. Both must be greater than zero before handoff. Totals include quantity. Cargo is locked after handoff to the courier.</p>
                     <field name="cargo_ids" nolabel="1" readonly="state != 'preparing'">
                         <list editable="bottom">
                             <field name="sequence" widget="handle"/>

@@ -114,14 +114,92 @@ class TestShipmentRequest(TransactionCase):
         second.unlink()
         self._assert_totals(other, 0, 0)
 
-    def test_valid_cargo_may_have_zero_weight_and_volume(self):
-        shipment = self._shipment()
-        self.Cargo.create(
-            self._cargo_values(shipment_id=shipment.id, quantity=0.5, weight=0, volume=0)
-        )
+    def test_incomplete_measurements_save_in_preparing_but_block_handoff(self):
+        for description, measurements in (
+            ("Zero weight", {"weight": 0, "volume": 0.25}),
+            ("Zero volume", {"weight": 3.5, "volume": 0}),
+            ("Both measurements zero", {"weight": 0, "volume": 0}),
+            ("Missing weight", {"volume": 0.25}),
+            ("Missing volume", {"weight": 3.5}),
+            ("Both measurements missing", {}),
+        ):
+            with self.subTest(description=description):
+                shipment = self._shipment()
+                line = self.Cargo.create({
+                    "shipment_id": shipment.id,
+                    "description": description,
+                    "quantity": 0.5,
+                    **measurements,
+                })
+                self.assertEqual(shipment.state, "preparing")
+                self.assertEqual(line.weight, measurements.get("weight", 0))
+                self.assertEqual(line.volume, measurements.get("volume", 0))
+                with self.assertRaises(UserError) as raised:
+                    shipment.action_with_courier()
+                self.assertIn(description, str(raised.exception))
+                self.assertEqual(shipment.state, "preparing")
+
+    def test_handoff_requires_positive_measurements_on_every_cargo_line(self):
+        shipment = self._shipment(cargo=True)
+        incomplete = self.Cargo.create([
+            self._cargo_values(
+                shipment_id=shipment.id, description="Unweighed box",
+                quantity=1, weight=0, volume=0.25,
+            ),
+            self._cargo_values(
+                shipment_id=shipment.id, description="Unmeasured pallet",
+                quantity=1, weight=3.5, volume=0,
+            ),
+        ])
+        # Positive shipment totals must not hide incomplete individual items.
+        self._assert_totals(shipment, 10.5, 0.75)
+        with self.assertRaises(UserError) as raised:
+            shipment.action_with_courier()
+        for description in incomplete.mapped("description"):
+            self.assertIn(description, str(raised.exception))
+        self.assertEqual(shipment.state, "preparing")
+
+        incomplete[0].write({"weight": 1})
+        with self.assertRaises(UserError) as raised:
+            shipment.action_with_courier()
+        self.assertIn("Unmeasured pallet", str(raised.exception))
+        self.assertEqual(shipment.state, "preparing")
+
+        incomplete[1].write({"volume": 0.1})
         shipment.action_with_courier()
-        self.assertEqual(shipment.state, "with_courier")
-        self._assert_totals(shipment, 0, 0)
+        shipment.action_on_the_way()
+        shipment.action_delivered()
+        self.assertEqual(shipment.state, "delivered")
+        self._assert_totals(shipment, 11.5, 0.85)
+
+    def test_legacy_incomplete_shipments_cannot_advance_further(self):
+        for state, action in (
+            ("with_courier", "action_on_the_way"),
+            ("on_the_way", "action_delivered"),
+        ):
+            for has_cargo in (True, False):
+                with self.subTest(state=state, has_cargo=has_cargo):
+                    shipment = self._shipment()
+                    if has_cargo:
+                        self.Cargo.create(self._cargo_values(
+                            shipment_id=shipment.id,
+                            description="Incomplete legacy cargo", weight=0, volume=0,
+                        ))
+                    # Fixture only: represent records saved before measurement
+                    # checks existed, without weakening the production workflow.
+                    shipment.flush_recordset(["state"])
+                    self.cr.execute(
+                        "UPDATE shipment_request SET state = %s WHERE id = %s",
+                        (state, shipment.id),
+                    )
+                    shipment.invalidate_recordset(["state"])
+                    self.assertEqual(shipment.state, state)
+
+                    with self.assertRaises(UserError) as raised:
+                        getattr(shipment, action)()
+                    expected = "Incomplete legacy cargo" if has_cargo else "cargo"
+                    self.assertIn(expected, str(raised.exception))
+                    self.assertEqual(shipment.state, state)
 
     def test_cargo_is_immutable_after_preparing_for_users_and_managers(self):
         shipment = self._shipment(cargo=True)
@@ -364,6 +442,23 @@ class TestShipmentRequest(TransactionCase):
         self.assertEqual(raised.exception.diag.constraint_name, "shipment_type_code_unique")
         shipment_type.write({"code": "  air-edited  "})
         self.assertEqual(shipment_type.code, "AIR-EDITED")
+        default_type = Type.with_context(default_code="  default-parcel  ").create(
+            {"name": "Default Parcel", "category": "parcel"}
+        )
+        self.assertEqual(default_type.code, "DEFAULT-PARCEL")
+        explicit_type = Type.with_context(default_code="  test-road  ").create(
+            {"name": "Explicit Code", "code": "  explicit-code  ", "category": "road"}
+        )
+        self.assertEqual(explicit_type.code, "EXPLICIT-CODE")
+        with (
+            mute_logger("odoo.sql_db"),
+            self.assertRaises(UniqueViolation) as raised,
+            self.cr.savepoint(),
+        ):
+            Type.with_context(default_code="  test-road  ").create(
+                {"name": "Duplicate From Context", "category": "road"}
+            )
+        self.assertEqual(raised.exception.diag.constraint_name, "shipment_type_code_unique")
 
     def test_archived_type_preserves_existing_shipments_but_blocks_new_selection(self):
         shipment = self._shipment()

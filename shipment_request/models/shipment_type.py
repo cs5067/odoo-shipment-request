@@ -24,7 +24,8 @@ class ShipmentType(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
-        return super().create([self._normalize_code(vals) for vals in vals_list])
+        defaults = self.default_get(["code"]) if any("code" not in vals for vals in vals_list) else {}
+        return super().create([self._normalize_code({**defaults, **vals}) for vals in vals_list])
 
     def write(self, vals):
         return super().write(self._normalize_code(vals))

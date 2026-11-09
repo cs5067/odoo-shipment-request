@@ -102,8 +102,14 @@ class ShipmentRequest(models.Model):
         self.check_access("write")
         if self.state != expected_state:
             raise UserError(_("This shipment has already moved on, or is not ready for this action. Please refresh it and use the next status button."))
-        if expected_state == "preparing" and not self.cargo_ids:
+        if not self.cargo_ids:
             raise UserError(_("Please add at least one cargo item before handing this shipment to the courier."))
+        incomplete = self.cargo_ids.filtered(lambda cargo: cargo.weight <= 0 or cargo.volume <= 0)
+        if incomplete:
+            raise UserError(_(
+                "Please enter a unit weight and unit volume greater than zero for each cargo item before advancing this shipment.\n\nItems to complete:\n%(items)s",
+                items="\n".join("- %s" % cargo.description for cargo in incomplete),
+            ))
         # Only these validated actions bypass write's state guard; no forgeable context flag.
         # Ensure the status history is retained even if an import/RPC context disables tracking.
         tracked = self.with_context(tracking_disable=False, mail_notrack=False)
