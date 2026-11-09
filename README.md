@@ -15,6 +15,10 @@ Install Docker Desktop (or Docker Engine with Compose), then run from this folde
 docker compose build odoo
 docker compose up -d --wait db
 docker compose run --rm -T odoo odoo -d shipment_demo -i shipment_request --without-demo=true --stop-after-init
+docker compose run --rm -T odoo odoo shell -d shipment_demo --no-http <<'PY'
+env["ir.config_parameter"].sudo().set_param("report.url", "http://127.0.0.1:8069")
+env.cr.commit()
+PY
 docker compose up -d odoo
 ```
 
