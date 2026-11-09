@@ -11,8 +11,10 @@ Assumptions and operating rules:
 - All Shipment Users share access to the team's requests. There is no owner
   partitioning or multi-company behavior.
 - Customers use Odoo contacts. Origins and destinations are free-text addresses.
-- Requested pickup and delivery are calendar dates. Delivery cannot precede
-  pickup.
+- Requested pickup and delivery are calendar dates. New requests and pickup
+  rescheduling must use today or a later date, based on the active Odoo user
+  timezone. Delivery cannot precede pickup. Existing shipments retain their
+  original pickup dates as time passes and can still be updated and delivered.
 - Cargo weight is kilograms per unit and volume is cubic metres per unit.
   Quantity may be fractional. Line totals are quantity × the unit measurement.
   Quantity must be positive. Weight and volume may be left at zero while
@@ -37,6 +39,8 @@ Assumptions and operating rules:
   shipment types, and ordered cargo lines.
 - Added automatic references such as `SHP/000001`. References cannot be edited;
   duplicating a request creates a new reference and starts it in Preparing.
+  A duplicate moves an elapsed pickup date to today, and an elapsed delivery
+  date to today if needed. Future dates remain unchanged; the source is untouched.
 - Added stored computed cargo and shipment totals that recalculate when cargo
   changes, plus validation of dates, routes, descriptions, and measurements.
 - Implemented the three lifecycle buttons with server-side validation. Direct
@@ -70,11 +74,13 @@ and wkhtmltopdf **0.12.6.1** in Docker.
 
 - A fresh database installed the addon and its dependencies with demo data
   disabled. No installation errors or invalid views remained.
-- The fresh-database test run completed successfully: **25 tests, 0 failures,
+- The fresh-database test run completed successfully: **30 tests, 0 failures,
   0 errors**. Coverage includes reference generation and duplication; totals on
   cargo creation, editing, deletion, and reassignment; cargo locking after
   handoff; missing-measurement checks on every line and on older in-progress
-  shipments; request-deletion restrictions; date and cargo validation; archive
+  shipments; request-deletion restrictions; past-date rejection on new and
+  rescheduled pickups; timezone boundaries; continued processing and duplication
+  of historical shipments; date ordering and cargo validation; archive
   behavior; lifecycle enforcement; dated history; empty board columns; role
   permissions; and report HTML.
 - Access checks use real non-superuser accounts. Ordinary internal users
@@ -90,6 +96,9 @@ and wkhtmltopdf **0.12.6.1** in Docker.
   three transitions, locked cargo, and recorded the dated history. An older
   in-progress shipment with zero measurements was also blocked. Duplicating a
   delivered request produced a new editable Preparing request and reference.
+- A browser check rejected a new request with yesterday's pickup date, then
+  saved it successfully after changing pickup to today. The automated tests
+  also verify rescheduling, context defaults, and timezone cutoffs.
 - The final running container's shipment model matched the tested source by
   SHA-256 after rebuilding, upgrading, and recreating the service. The addon
   path avoids the base image's persistent addon volume, which otherwise retained
@@ -132,7 +141,8 @@ internal container port, while the browser uses port 18069 on the host.
    `Road Express`, code `ROAD`, category `Road`. Archive/unarchive is available
    in the record's Actions menu; the Archived filter finds archived types.
 4. Open **Shipments → Shipments → New**. Select or create a contact, choose the
-   type, enter the route and requested dates, and save. A reference is assigned.
+   type, enter the route and requested dates, and save. Pickup must be today or
+   later, and delivery must be on or after pickup. A reference is assigned.
 5. Try **Hand to Courier** without cargo to see the validation message. Add a
    cargo line with quantity `2`, unit weight `3.5`, and unit volume `0.25`. The
    totals are `7.000 kg` and `0.500 m³`. Edit or remove the line while Preparing

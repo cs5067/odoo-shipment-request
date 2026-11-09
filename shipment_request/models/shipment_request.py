@@ -47,8 +47,14 @@ class ShipmentRequest(models.Model):
     @api.model_create_multi
     def create(self, vals_list):
         prepared = []
+        default_pickup = (
+            self.default_get(["pickup_date"]).get("pickup_date")
+            if any("pickup_date" not in vals for vals in vals_list) else False
+        )
         for vals in vals_list:
             vals = dict(vals)
+            vals.setdefault("pickup_date", default_pickup)
+            self._check_requested_pickup_date(vals["pickup_date"])
             if vals.get("state", "preparing") != "preparing":
                 raise UserError(_("New shipments start in Preparing. Use the status buttons to advance them."))
             # Explicit values prevent default_state/default_name contexts bypassing the workflow.
@@ -64,7 +70,29 @@ class ShipmentRequest(models.Model):
             raise UserError(_("Please use the status buttons to advance a shipment."))
         if "name" in vals and any(shipment.name != vals["name"] for shipment in self):
             raise UserError(_("Shipment references are assigned automatically and cannot be changed."))
+        if "pickup_date" in vals:
+            pickup = fields.Date.to_date(vals["pickup_date"])
+            # Time passing must not prevent updates to an existing shipment.
+            if any(shipment.pickup_date != pickup for shipment in self):
+                self._check_requested_pickup_date(pickup)
         return super().write(vals)
+
+    @api.model
+    def _check_requested_pickup_date(self, value):
+        pickup = fields.Date.to_date(value)
+        if pickup and pickup < fields.Date.context_today(self):
+            raise ValidationError(_("The requested pickup date cannot be in the past. Please choose today or a later date."))
+
+    def copy_data(self, default=None):
+        values_list = super().copy_data(default=default)
+        today = fields.Date.context_today(self)
+        for values in values_list:
+            # A duplicate is a new request, so an elapsed schedule starts today.
+            if "pickup_date" not in (default or {}) and fields.Date.to_date(values["pickup_date"]) < today:
+                values["pickup_date"] = today
+                if "delivery_date" not in (default or {}) and fields.Date.to_date(values["delivery_date"]) < today:
+                    values["delivery_date"] = today
+        return values_list
 
     def _check_cargo_editable(self):
         if any(shipment.state != "preparing" for shipment in self):

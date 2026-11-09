@@ -1,6 +1,9 @@
+from datetime import date, datetime, timedelta
+from unittest.mock import patch
+
 from psycopg2.errors import CheckViolation, UniqueViolation
 
-from odoo import Command
+from odoo import Command, fields
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import TransactionCase, new_test_user, tagged
 from odoo.tools import mute_logger
@@ -42,13 +45,14 @@ class TestShipmentRequest(TransactionCase):
         cls.Cargo = cls.env["shipment.cargo"].with_user(cls.shipment_user)
 
     def _request_values(self, **overrides):
+        today = fields.Date.context_today(self.Request)
         values = {
             "customer_id": self.customer.id,
             "shipment_type_id": self.shipment_type.id,
             "origin": "Cairo warehouse",
             "destination": "Alexandria depot",
-            "pickup_date": "2026-11-10",
-            "delivery_date": "2026-11-12",
+            "pickup_date": today + timedelta(days=1),
+            "delivery_date": today + timedelta(days=3),
         }
         values.update(overrides)
         return values
@@ -82,6 +86,8 @@ class TestShipmentRequest(TransactionCase):
         self.assertTrue(all(name.startswith("SHP/") for name in references))
         self.assertNotIn("CUSTOM-REFERENCE", references)
         self.assertEqual(duplicate.state, "preparing")
+        self.assertEqual(duplicate.pickup_date, shipments[0].pickup_date)
+        self.assertEqual(duplicate.delivery_date, shipments[0].delivery_date)
 
     def test_reference_cannot_be_rewritten(self):
         shipment = self._shipment()
@@ -340,13 +346,129 @@ class TestShipmentRequest(TransactionCase):
         self._assert_totals(shipment, 7, 0.5)
 
     def test_delivery_cannot_precede_pickup(self):
+        today = fields.Date.context_today(self.Request)
         with self.assertRaises(ValidationError), self.cr.savepoint():
-            self._shipment(delivery_date="2026-11-09")
+            self._shipment(delivery_date=today)
         shipment = self._shipment()
         with self.assertRaises(ValidationError), self.cr.savepoint():
-            shipment.write({"pickup_date": "2026-11-13"})
-        shipment.write({"delivery_date": "2026-11-10"})
+            shipment.write({"pickup_date": shipment.delivery_date + timedelta(days=1)})
+        shipment.write({"delivery_date": shipment.pickup_date})
         self.assertEqual(shipment.pickup_date, shipment.delivery_date)
+
+    def test_new_or_changed_pickup_cannot_be_in_the_past(self):
+        today = fields.Date.context_today(self.Request)
+        yesterday = today - timedelta(days=1)
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            self._shipment(pickup_date=yesterday, delivery_date=today)
+
+        values = self._request_values(delivery_date=today)
+        values.pop("pickup_date")
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            self.Request.with_context(default_pickup_date=yesterday).create(values)
+
+        shipment = self._shipment()
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            shipment.write({"pickup_date": yesterday})
+        self.assertGreaterEqual(shipment.pickup_date, today)
+
+        # Explicit valid values take precedence over a stale context default.
+        explicit = self.Request.with_context(default_pickup_date=yesterday).create(
+            self._request_values(pickup_date=today, delivery_date=today)
+        )
+        self.assertEqual(explicit.pickup_date, today)
+
+    def test_pickup_today_future_and_normal_default_are_allowed(self):
+        today = fields.Date.context_today(self.Request)
+        same_day = self._shipment(pickup_date=today, delivery_date=today)
+        self.assertEqual(same_day.pickup_date, today)
+        future = self._shipment()
+        self.assertGreater(future.pickup_date, today)
+        future.write({"pickup_date": today})
+        self.assertEqual(future.pickup_date, today)
+        values = self._request_values()
+        values.pop("pickup_date")
+        defaulted = self.Request.create(values)
+        self.assertEqual(defaulted.pickup_date, today)
+
+    def test_existing_past_pickup_allows_edits_and_lifecycle_progress(self):
+        original_day = fields.Date.context_today(self.Request)
+        shipment = self._shipment(
+            cargo=True, pickup_date=original_day, delivery_date=original_day
+        )
+        later_today = original_day + timedelta(days=10)
+        with patch.object(fields.Date, "context_today", return_value=later_today):
+            shipment.write({"destination": "Updated delivery depot"})
+            shipment.write({"delivery_date": later_today})
+            for unchanged in (original_day, fields.Date.to_string(original_day)):
+                shipment.write({"pickup_date": unchanged})
+            self.assertEqual(shipment.pickup_date, original_day)
+            with self.assertRaises(ValidationError), self.cr.savepoint():
+                shipment.write({"pickup_date": original_day + timedelta(days=1)})
+            shipment.action_with_courier()
+            shipment.action_on_the_way()
+            shipment.action_delivered()
+        self.assertEqual(shipment.state, "delivered")
+        self.assertEqual(shipment.pickup_date, original_day)
+
+    def test_pickup_cutoff_uses_the_users_timezone(self):
+        real_context_today = fields.Date.context_today
+        fixed_utc = datetime(2030, 1, 1, 0, 30)
+        with patch.object(
+            fields.Date, "context_today",
+            side_effect=lambda record: real_context_today(record, timestamp=fixed_utc),
+        ):
+            west = self.Request.with_context(tz="America/Los_Angeles")
+            east = self.Request.with_context(tz="Asia/Tokyo")
+            self.assertEqual(fields.Date.context_today(west), date(2029, 12, 31))
+            self.assertEqual(fields.Date.context_today(east), date(2030, 1, 1))
+            values = self._request_values(
+                pickup_date=date(2029, 12, 31), delivery_date=date(2030, 1, 1)
+            )
+            western_shipment = west.create(values)
+            self.assertEqual(western_shipment.pickup_date, date(2029, 12, 31))
+            with self.assertRaises(ValidationError), self.cr.savepoint():
+                east.create(values)
+            eastern_shipment = east.create({**values, "pickup_date": date(2030, 1, 1)})
+            self.assertEqual(eastern_shipment.pickup_date, date(2030, 1, 1))
+
+    def test_copy_historical_shipment_rolls_past_dates_forward(self):
+        original_day = fields.Date.context_today(self.Request)
+        source = self._shipment(
+            cargo=True, pickup_date=original_day,
+            delivery_date=original_day + timedelta(days=2),
+        )
+        source.action_with_courier()
+        source.action_on_the_way()
+        source.action_delivered()
+        later_delivery = original_day + timedelta(days=20)
+        partly_historical = self._shipment(
+            pickup_date=original_day, delivery_date=later_delivery
+        )
+        later_today = original_day + timedelta(days=10)
+        with patch.object(fields.Date, "context_today", return_value=later_today):
+            duplicate = source.copy()
+            self.assertEqual(duplicate.pickup_date, later_today)
+            self.assertEqual(duplicate.delivery_date, later_today)
+            self.assertEqual(duplicate.state, "preparing")
+            self.assertNotEqual(duplicate.name, source.name)
+            self.assertNotEqual(duplicate.cargo_ids, source.cargo_ids)
+            self._assert_totals(duplicate, 7, 0.5)
+            preserved_delivery = partly_historical.copy()
+            self.assertEqual(preserved_delivery.pickup_date, later_today)
+            self.assertEqual(preserved_delivery.delivery_date, later_delivery)
+
+            explicit_dates = {
+                "pickup_date": later_today + timedelta(days=5),
+                "delivery_date": later_today + timedelta(days=6),
+            }
+            explicit = source.copy(explicit_dates)
+            self.assertEqual(explicit.pickup_date, explicit_dates["pickup_date"])
+            self.assertEqual(explicit.delivery_date, explicit_dates["delivery_date"])
+            with self.assertRaises(ValidationError), self.cr.savepoint():
+                source.copy({"pickup_date": later_today - timedelta(days=1)})
+        self.assertEqual(source.pickup_date, original_day)
+        self.assertEqual(source.delivery_date, original_day + timedelta(days=2))
+        self.assertEqual(source.state, "delivered")
 
     def test_empty_shipment_cannot_leave_preparing(self):
         shipment = self._shipment()
